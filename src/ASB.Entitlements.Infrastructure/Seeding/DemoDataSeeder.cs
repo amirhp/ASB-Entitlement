@@ -1,3 +1,6 @@
+using ASB.Entitlements.Domain.Entities;
+using ASB.Entitlements.Domain.Repositories;
+using ASB.Entitlements.Domain.Services;
 using ASB.Entitlements.Infrastructure.Persistence;
 using Microsoft.Extensions.Logging;
 
@@ -6,55 +9,59 @@ namespace ASB.Entitlements.Infrastructure.Seeding;
 public sealed class DemoDataSeeder : IDataSeeder
 {
     private readonly INeo4jContext _context;
+    private readonly IIdentityRepository _identityRepository;
+    private readonly IRoleRepository _roleRepository;
+    private readonly IPermissionRepository _permissionRepository;
+    private readonly IResourceRepository _resourceRepository;
+    private readonly IEntitlementDomainService _domainService;
     private readonly ILogger<DemoDataSeeder> _logger;
 
     public DemoDataSeeder(
         INeo4jContext context,
+        IIdentityRepository identityRepository,
+        IRoleRepository roleRepository,
+        IPermissionRepository permissionRepository,
+        IResourceRepository resourceRepository,
+        IEntitlementDomainService domainService,
         ILogger<DemoDataSeeder> logger)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
+        _identityRepository = identityRepository ?? throw new ArgumentNullException(nameof(identityRepository));
+        _roleRepository = roleRepository ?? throw new ArgumentNullException(nameof(roleRepository));
+        _permissionRepository = permissionRepository ?? throw new ArgumentNullException(nameof(permissionRepository));
+        _resourceRepository = resourceRepository ?? throw new ArgumentNullException(nameof(resourceRepository));
+        _domainService = domainService ?? throw new ArgumentNullException(nameof(domainService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task SeedAsync(CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Starting demo data seeding...");
+        _logger.LogInformation("Starting demo data seeding using domain entities...");
 
-        var session = _context.GetSession();
         try
         {
             // Clear existing demo data
-            await ClearDemoDataAsync(session);
+            await ClearAllDataAsync();
 
-            // Create Identities (BIAN: Party)
-            await CreateIdentitiesAsync(session);
+            // Create domain entities using proper repositories
+            await CreateIdentitiesAsync(cancellationToken);
+            await CreateRolesAsync(cancellationToken);
+            await CreatePermissionsAsync(cancellationToken);
+            await CreateResourcesAsync(cancellationToken);
 
-            // Create Roles (BIAN: Party Role)
-            await CreateRolesAsync(session);
+            // Create relationships using domain service
+            await CreateRelationshipsAsync(cancellationToken);
 
-            // Create Permissions (BIAN: Authorization)
-            await CreatePermissionsAsync(session);
-
-            // Create Resources (BIAN: Product/Service)
-            await CreateResourcesAsync(session);
-
-            // Create Relationships
-            await CreateRelationshipsAsync(session);
-
-            _logger.LogInformation("Demo data seeding completed successfully");
+            _logger.LogInformation("Demo data seeding completed successfully using domain entities");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during demo data seeding");
             throw;
         }
-        finally
-        {
-            await session.CloseAsync();
-        }
     }
 
-    private async Task ClearDemoDataAsync(Neo4j.Driver.IAsyncSession session)
+    private async Task ClearAllDataAsync()
     {
         _logger.LogInformation("Clearing existing demo data...");
 
@@ -63,201 +70,161 @@ public sealed class DemoDataSeeder : IDataSeeder
             WHERE n:Identity OR n:Role OR n:Permission OR n:Resource
             DETACH DELETE n";
 
-        await session.RunAsync(clearQuery);
+        var session = _context.GetSession();
+        try
+        {
+            await session.RunAsync(clearQuery);
+        }
+        finally
+        {
+            await session.CloseAsync();
+        }
     }
 
-    private async Task CreateIdentitiesAsync(Neo4j.Driver.IAsyncSession session)
+    private async Task CreateIdentitiesAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Creating identities...");
+        _logger.LogInformation("Creating identities using domain entities...");
 
-        const string query = @"
-            CREATE (alice:Identity {
-                id: 'user1',
-                name: 'Alice Johnson',
-                type: 'Customer',
-                isActive: true,
-                createdAt: datetime()
-            })
-            CREATE (bob:Identity {
-                id: 'user2',
-                name: 'Bob Smith',
-                type: 'Customer',
-                isActive: true,
-                createdAt: datetime()
-            })
-            CREATE (admin:Identity {
-                id: 'admin1',
-                name: 'Admin User',
-                type: 'Employee',
-                isActive: true,
-                createdAt: datetime()
-            })";
+        // Create domain entities - business logic is in the entity constructors
+        var alice = new Identity("user1", "Alice Johnson", IdentityType.Customer);
+        var bob = new Identity("user2", "Bob Smith", IdentityType.Customer);
+        var admin = new Identity("admin1", "Admin User", IdentityType.Employee);
 
-        await session.RunAsync(query);
+        // Persist using repository
+        await _identityRepository.CreateAsync(alice, cancellationToken);
+        await _identityRepository.CreateAsync(bob, cancellationToken);
+        await _identityRepository.CreateAsync(admin, cancellationToken);
+
+        _logger.LogInformation("Identities created: Alice, Bob, Admin");
     }
 
-    private async Task CreateRolesAsync(Neo4j.Driver.IAsyncSession session)
+    private async Task CreateRolesAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Creating roles...");
+        _logger.LogInformation("Creating roles using domain entities...");
 
-        const string query = @"
-            CREATE (customer:Role {
-                id: 'role_customer',
-                name: 'Customer',
-                description: 'Standard customer role with read access',
-                type: 'SystemDefined',
-                isActive: true,
-                createdAt: datetime()
-            })
-            CREATE (admin:Role {
-                id: 'role_admin',
-                name: 'Admin',
-                description: 'Administrator role with full access',
-                type: 'SystemDefined',
-                isActive: true,
-                createdAt: datetime()
-            })
-            CREATE (accountManager:Role {
-                id: 'role_account_manager',
-                name: 'AccountManager',
-                description: 'Account manager role with edit access',
-                type: 'SystemDefined',
-                isActive: true,
-                createdAt: datetime()
-            })";
+        var customerRole = new Role(
+            "role_customer",
+            "Customer",
+            "Standard customer role with read access",
+            RoleType.SystemDefined);
 
-        await session.RunAsync(query);
+        var adminRole = new Role(
+            "role_admin",
+            "Admin",
+            "Administrator role with full access",
+            RoleType.SystemDefined);
+
+        var managerRole = new Role(
+            "role_account_manager",
+            "AccountManager",
+            "Account manager role with edit access",
+            RoleType.SystemDefined);
+
+        await _roleRepository.CreateAsync(customerRole, cancellationToken);
+        await _roleRepository.CreateAsync(adminRole, cancellationToken);
+        await _roleRepository.CreateAsync(managerRole, cancellationToken);
+
+        _logger.LogInformation("Roles created: Customer, Admin, AccountManager");
     }
 
-    private async Task CreatePermissionsAsync(Neo4j.Driver.IAsyncSession session)
+    private async Task CreatePermissionsAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Creating permissions...");
+        _logger.LogInformation("Creating permissions using domain entities...");
 
-        const string query = @"
-            CREATE (viewAccount:Permission {
-                id: 'perm_view_account',
-                name: 'ViewAccount',
-                action: 'ViewAccount',
-                description: 'Permission to view account details',
-                scope: 'Read',
-                isActive: true,
-                createdAt: datetime()
-            })
-            CREATE (editAccount:Permission {
-                id: 'perm_edit_account',
-                name: 'EditAccount',
-                action: 'EditAccount',
-                description: 'Permission to edit account details',
-                scope: 'Write',
-                isActive: true,
-                createdAt: datetime()
-            })
-            CREATE (deleteAccount:Permission {
-                id: 'perm_delete_account',
-                name: 'DeleteAccount',
-                action: 'DeleteAccount',
-                description: 'Permission to delete accounts',
-                scope: 'Delete',
-                isActive: true,
-                createdAt: datetime()
-            })
-            CREATE (viewTransaction:Permission {
-                id: 'perm_view_transaction',
-                name: 'ViewTransaction',
-                action: 'ViewTransaction',
-                description: 'Permission to view transactions',
-                scope: 'Read',
-                isActive: true,
-                createdAt: datetime()
-            })";
+        var viewAccount = new Permission(
+            "perm_view_account",
+            "ViewAccount",
+            "ViewAccount",
+            "Permission to view account details",
+            PermissionScope.Read);
 
-        await session.RunAsync(query);
+        var editAccount = new Permission(
+            "perm_edit_account",
+            "EditAccount",
+            "EditAccount",
+            "Permission to edit account details",
+            PermissionScope.Write);
+
+        var deleteAccount = new Permission(
+            "perm_delete_account",
+            "DeleteAccount",
+            "DeleteAccount",
+            "Permission to delete accounts",
+            PermissionScope.Delete);
+
+        var viewTransaction = new Permission(
+            "perm_view_transaction",
+            "ViewTransaction",
+            "ViewTransaction",
+            "Permission to view transactions",
+            PermissionScope.Read);
+
+        await _permissionRepository.CreateAsync(viewAccount, cancellationToken);
+        await _permissionRepository.CreateAsync(editAccount, cancellationToken);
+        await _permissionRepository.CreateAsync(deleteAccount, cancellationToken);
+        await _permissionRepository.CreateAsync(viewTransaction, cancellationToken);
+
+        _logger.LogInformation("Permissions created: View, Edit, Delete, ViewTransaction");
     }
 
-    private async Task CreateResourcesAsync(Neo4j.Driver.IAsyncSession session)
+    private async Task CreateResourcesAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Creating resources...");
+        _logger.LogInformation("Creating resources using domain entities...");
 
-        const string query = @"
-            CREATE (acc1:Resource {
-                id: 'acc1',
-                name: 'Savings Account 001',
-                type: 'SavingsAccount',
-                description: 'Primary savings account',
-                classification: 'Internal',
-                isActive: true,
-                createdAt: datetime()
-            })
-            CREATE (acc2:Resource {
-                id: 'acc2',
-                name: 'Checking Account 002',
-                type: 'CheckingAccount',
-                description: 'Primary checking account',
-                classification: 'Internal',
-                isActive: true,
-                createdAt: datetime()
-            })
-            CREATE (acc3:Resource {
-                id: 'acc3',
-                name: 'Investment Account 003',
-                type: 'InvestmentAccount',
-                description: 'Investment portfolio account',
-                classification: 'Confidential',
-                isActive: true,
-                createdAt: datetime()
-            })";
+        var savingsAccount = new Resource(
+            "acc1",
+            "Savings Account 001",
+            "SavingsAccount",
+            "Primary savings account",
+            ResourceClassification.Internal);
 
-        await session.RunAsync(query);
+        var checkingAccount = new Resource(
+            "acc2",
+            "Checking Account 002",
+            "CheckingAccount",
+            "Primary checking account",
+            ResourceClassification.Internal);
+
+        var investmentAccount = new Resource(
+            "acc3",
+            "Investment Account 003",
+            "InvestmentAccount",
+            "Investment portfolio account",
+            ResourceClassification.Confidential);
+
+        await _resourceRepository.CreateAsync(savingsAccount, cancellationToken);
+        await _resourceRepository.CreateAsync(checkingAccount, cancellationToken);
+        await _resourceRepository.CreateAsync(investmentAccount, cancellationToken);
+
+        _logger.LogInformation("Resources created: Savings, Checking, Investment accounts");
     }
 
-    private async Task CreateRelationshipsAsync(Neo4j.Driver.IAsyncSession session)
+    private async Task CreateRelationshipsAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Creating relationships...");
+        _logger.LogInformation("Creating relationships using domain service...");
 
-        const string query = @"
-            // Alice (Customer) -> Customer Role -> ViewAccount Permission -> acc1
-            MATCH (alice:Identity {id: 'user1'})
-            MATCH (customerRole:Role {id: 'role_customer'})
-            MATCH (viewPerm:Permission {id: 'perm_view_account'})
-            MATCH (acc1:Resource {id: 'acc1'})
-            MATCH (acc2:Resource {id: 'acc2'})
-            CREATE (alice)-[:HAS_ROLE]->(customerRole)
-            CREATE (customerRole)-[:GRANTS]->(viewPerm)
-            CREATE (viewPerm)-[:ON]->(acc1)
-            CREATE (viewPerm)-[:ON]->(acc2)
+        // Alice (Customer) -> Customer Role -> ViewAccount Permission -> acc1, acc2
+        await _domainService.AssignRoleToIdentityAsync("user1", "role_customer", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_customer", "perm_view_account", "acc1", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_customer", "perm_view_account", "acc2", cancellationToken);
 
-            // Bob (Customer) -> AccountManager Role -> Edit & View -> acc2
-            WITH *
-            MATCH (bob:Identity {id: 'user2'})
-            MATCH (managerRole:Role {id: 'role_account_manager'})
-            MATCH (editPerm:Permission {id: 'perm_edit_account'})
-            MATCH (viewPerm:Permission {id: 'perm_view_account'})
-            MATCH (acc2:Resource {id: 'acc2'})
-            CREATE (bob)-[:HAS_ROLE]->(managerRole)
-            CREATE (managerRole)-[:GRANTS]->(editPerm)
-            CREATE (managerRole)-[:GRANTS]->(viewPerm)
-            CREATE (editPerm)-[:ON]->(acc2)
+        // Bob (AccountManager) -> AccountManager Role -> Edit & View -> acc2
+        await _domainService.AssignRoleToIdentityAsync("user2", "role_account_manager", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_account_manager", "perm_edit_account", "acc2", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_account_manager", "perm_view_account", "acc2", cancellationToken);
 
-            // Admin -> Admin Role -> All Permissions -> All Resources
-            WITH *
-            MATCH (admin:Identity {id: 'admin1'})
-            MATCH (adminRole:Role {id: 'role_admin'})
-            MATCH (viewPerm:Permission {id: 'perm_view_account'})
-            MATCH (editPerm:Permission {id: 'perm_edit_account'})
-            MATCH (deletePerm:Permission {id: 'perm_delete_account'})
-            MATCH (acc1:Resource {id: 'acc1'})
-            MATCH (acc2:Resource {id: 'acc2'})
-            MATCH (acc3:Resource {id: 'acc3'})
-            CREATE (admin)-[:HAS_ROLE]->(adminRole)
-            CREATE (adminRole)-[:GRANTS]->(viewPerm)
-            CREATE (adminRole)-[:GRANTS]->(editPerm)
-            CREATE (adminRole)-[:GRANTS]->(deletePerm)
-            CREATE (deletePerm)-[:ON]->(acc1)
-            CREATE (deletePerm)-[:ON]->(acc2)
-            CREATE (deletePerm)-[:ON]->(acc3)";
+        // Admin -> Admin Role -> All Permissions -> All Resources
+        await _domainService.AssignRoleToIdentityAsync("admin1", "role_admin", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_admin", "perm_view_account", "acc1", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_admin", "perm_view_account", "acc2", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_admin", "perm_view_account", "acc3", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_admin", "perm_edit_account", "acc1", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_admin", "perm_edit_account", "acc2", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_admin", "perm_edit_account", "acc3", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_admin", "perm_delete_account", "acc1", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_admin", "perm_delete_account", "acc2", cancellationToken);
+        await _domainService.GrantPermissionToRoleAsync("role_admin", "perm_delete_account", "acc3", cancellationToken);
 
-        await session.RunAsync(query);
-
-        _logger.LogInformation("Demo data relationships created successfully");
+        _logger.LogInformation("Relationships created successfully using domain service");
     }
 }
